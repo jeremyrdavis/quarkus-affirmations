@@ -1,0 +1,51 @@
+name: Build Docker Containers for Microservices
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Process each microservice
+        run: |
+          for dir in $(find . -mindepth 1 -maxdepth 1 -type d); do
+            echo "Processing directory: $dir"
+            cd $dir
+
+            # Get artifactId from pom.xml
+            artifactId=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
+            echo "POM_ARTIFACT=$artifactId" >> $GITHUB_ENV
+
+            # Get version from pom.xml
+            version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            echo "POM_VERSION=$version" >> $GITHUB_ENV
+
+            # Build with Maven
+            mvn clean package --file pom.xml
+
+            # Set up Docker Buildx
+            docker/setup-buildx-action@v1
+
+            # Build Docker image
+            docker build --file src/main/docker/Dockerfile.jvm -t ${{ secrets.DOCKERHUB_USERNAME }}/$artifactId:$version -t ${{ secrets.DOCKERHUB_USERNAME }}/$artifactId:latest .
+
+            # Push Docker image
+            echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$artifactId:$version
+            docker push ${{ secrets.DOCKERHUB_USERNAME }}/$artifactId:latest
+
+            cd -
+          done
